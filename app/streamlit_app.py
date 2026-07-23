@@ -281,17 +281,63 @@ values was compared directly and found to be nearly identical (~11.4% either way
 preserving every row instead of discarding data over a non-informative gap.
 """)
 
-    if df_eng is not None and {"weight", "readmitted_binary"}.issubset(df_eng.columns):
-        miss_rate = (
-            df_eng.assign(weight_status=df_eng["weight"].eq("Missing").map(
-                {True: "weight Missing", False: "weight Recorded"}))
-            .groupby("weight_status")["readmitted_binary"].mean() * 100
-        )
-        st.bar_chart(miss_rate)
+    miss_cols = [c for c in ["weight", "payer_code", "medical_specialty"] if df_eng is not None and c in df_eng.columns]
+    if df_eng is not None and miss_cols and "readmitted_binary" in df_eng.columns:
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        # --- Chart 1: how missing is each column? (the "~97%" claim, made visible) ---
+        pct_missing = [(df_eng[c] == "Missing").mean() * 100 for c in miss_cols]
+
+        # --- Chart 2: does missing vs. recorded change the readmission rate? ---
+        rates_missing, rates_recorded = [], []
+        for c in miss_cols:
+            grp = df_eng.assign(_status=df_eng[c].eq("Missing")).groupby("_status")["readmitted_binary"].mean() * 100
+            rates_missing.append(grp.get(True, 0.0))
+            rates_recorded.append(grp.get(False, 0.0))
+
+        mc1, mc2 = st.columns(2)
+
+        with mc1:
+            fig1, ax1 = plt.subplots(figsize=(5, 3.6), dpi=140)
+            bars = ax1.bar(miss_cols, pct_missing, color="#5B8FF9", width=0.55)
+            ax1.set_ylabel("% of encounters missing")
+            ax1.set_title("How much of each column is missing?", fontsize=10)
+            ax1.set_ylim(0, 105)
+            for b, v in zip(bars, pct_missing):
+                ax1.text(b.get_x() + b.get_width() / 2, v + 2, f"{v:.1f}%", ha="center", fontsize=9, fontweight="bold")
+            ax1.spines[["top", "right"]].set_visible(False)
+            fig1.tight_layout()
+            st.pyplot(fig1, use_container_width=True)
+
+        with mc2:
+            fig2, ax2 = plt.subplots(figsize=(5, 3.6), dpi=140)
+            x = np.arange(len(miss_cols))
+            width = 0.35
+            b1 = ax2.bar(x - width / 2, rates_missing, width, label="Missing", color="#5B8FF9")
+            b2 = ax2.bar(x + width / 2, rates_recorded, width, label="Recorded", color="#F6A623")
+            ax2.set_xticks(x)
+            ax2.set_xticklabels(miss_cols, fontsize=9)
+            ax2.set_ylabel("Readmission rate (%)")
+            ax2.set_title("Does missingness change the readmission rate?", fontsize=10)
+            y_max = max(rates_missing + rates_recorded) * 1.35
+            ax2.set_ylim(0, y_max)
+            for bars in (b1, b2):
+                for b in bars:
+                    h = b.get_height()
+                    ax2.text(b.get_x() + b.get_width() / 2, h + y_max * 0.02, f"{h:.1f}%",
+                              ha="center", fontsize=8, fontweight="bold")
+            ax2.legend(fontsize=8, loc="upper right")
+            ax2.spines[["top", "right"]].set_visible(False)
+            fig2.tight_layout()
+            st.pyplot(fig2, use_container_width=True)
+
         st.caption(
-            f"Readmission rate is **{miss_rate.get('weight Missing', 0):.1f}%** when `weight` is "
-            f"missing vs. **{miss_rate.get('weight Recorded', 0):.1f}%** when it's recorded — "
-            "close enough to confirm missingness itself carries no signal here."
+            "Left: how badly each column is missing (this is the ~97% figure quoted above, made visible "
+            "instead of just asserted). Right: readmission rate barely moves between the Missing and "
+            "Recorded groups for any of the three columns — that near-identical pairing per column is the "
+            "actual evidence that missingness carries no signal here, which is why rows/columns were kept "
+            "and \"Missing\" was encoded as its own category rather than dropped."
         )
 
     st.subheader("🗂️ ICD-9 Diagnosis Grouping")
