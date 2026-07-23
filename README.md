@@ -52,11 +52,10 @@ A probability score on its own doesn't change behavior. This project is built ar
 | Preprocessing & Model Training (6 models) | `notebooks/02_preprocessing_modeling.ipynb` | ✅ Complete |
 | Cost-Aware Model Selection | `notebooks/02_preprocessing_modeling.ipynb`, Block 10 | ✅ Complete |
 | Threshold Simulation | `notebooks/02_preprocessing_modeling.ipynb`, Block 11 | ✅ Complete |
-| Specialty-Specific vs. General Model Comparison | — | ⏳ Planned, not started |
 | FastAPI Inference Backend | `app/main.py` | ✅ Complete |
 | Streamlit Dashboard | `app/streamlit_app.py` | ✅ Complete |
 | LLM-Generated Risk Notes | `app/main.py` | ✅ Complete |
-| Public Deployment | — | ⏳ Not yet deployed |
+| Public Deployment | — |  Not yet deployed |
 
 ## Feature Engineering
 
