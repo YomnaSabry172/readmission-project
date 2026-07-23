@@ -55,7 +55,7 @@ A probability score on its own doesn't change behavior. This project is built ar
 | FastAPI Inference Backend | `app/main.py` | ✅ Complete |
 | Streamlit Dashboard | `app/streamlit_app.py` | ✅ Complete |
 | LLM-Generated Risk Notes | `app/main.py` | ✅ Complete |
-| Public Deployment | — |  Not yet deployed |
+| Public Deployment | [Live demo](https://readmission-project-prediction-yomnasabry.streamlit.app/) | ✅ Deployed |
 
 ## Feature Engineering
 
@@ -249,11 +249,13 @@ Five-person team project, built with rotating pipeline ownership — every membe
 
 ## Contributors
 
-- [Yomna Sabry](https://github.com/YomnaSabry172)
-- [Ahmed Mohamed Ghareeb](https://github.com/ahmedmohamed1807)
-- [Mennaallah Mohammed](https://github.com/mennaallah275)
-- [Fady Nasser](https://github.com/fadynasser729-cpu)
-- [Hana Hassan](https://github.com/hanahassan7)
+| Contributor | GitHub |
+|---|---|
+| <img src="https://github.com/YomnaSabry172.png?size=100" width="80" alt="Yomna Sabry" /> | [Yomna Sabry](https://github.com/YomnaSabry172) |
+| <img src="https://github.com/ahmedmohamed1807.png?size=100" width="80" alt="Ahmed Mohamed Ghareeb" /> | [Ahmed Mohamed Ghareeb](https://github.com/ahmedmohamed1807) |
+| <img src="https://github.com/mennaallah275.png?size=100" width="80" alt="Mennaallah Mohammed" /> | [Mennaallah Mohammed](https://github.com/mennaallah275) |
+| <img src="https://github.com/fadynasser729-cpu.png?size=100" width="80" alt="Fady Nasser" /> | [Fady Nasser](https://github.com/fadynasser729-cpu) |
+| <img src="https://github.com/hanahassan7.png?size=100" width="80" alt="Hana Hassan" /> | [Hana Hassan](https://github.com/hanahassan7) |
 
 ## License
 
