@@ -5,6 +5,19 @@ import pandas as pd
 
 st.set_page_config(page_title="Readmission Risk Predictor", layout="wide", page_icon="🏥")
 
+
+@st.cache_data
+def load_engineered_data():
+    """Loads the full engineered dataset once per session (cached) so the
+    dataset-level distribution charts in the Graphs tab don't re-read a
+    23MB CSV on every widget interaction."""
+    for path in ["../data/diabetic_data_engineered.csv", "data/diabetic_data_engineered.csv"]:
+        try:
+            return pd.read_csv(path)
+        except FileNotFoundError:
+            continue
+    return None
+
 # Locally this defaults to the FastAPI dev server. When deployed, set the
 # API_BASE_URL environment variable (or Streamlit secret) to the hosted
 # FastAPI URL, e.g. https://your-app.onrender.com
@@ -35,7 +48,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🏥 Hospital Readmission Risk Predictor")
-st.caption("Cost-aware ML system predicting 30-day readmission risk — UCI Diabetes 130-US Hospitals dataset")
+st.caption("Cost-aware ML system predicting 30-day readmission risk; UCI Diabetes 130-US Hospitals dataset")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🧩 The Problem", "📊 The Dataset", "🧠 About the Model", "📈 Graphs & Visualizations", "🔮 Prediction"
@@ -203,6 +216,26 @@ should not be modeled the same way.
     t1.metric("Encounters retained after cleaning", "99,343")
     t2.metric("Positive class (<30-day readmission)", "11.39%")
 
+    df_eng = load_engineered_data()
+    if df_eng is not None and "readmitted_binary" in df_eng.columns:
+        target_counts = (
+            df_eng["readmitted_binary"]
+            .map({0: "Not readmitted <30d", 1: "Readmitted <30d"})
+            .value_counts()
+        )
+        st.bar_chart(target_counts)
+        pos_n = int(target_counts.get("Readmitted <30d", 0))
+        st.caption(
+            f"**{pos_n:,} of {len(df_eng):,} encounters ({pos_n / len(df_eng):.1%}) are the positive "
+            "class.** This is the imbalance every metric choice, threshold decision, and cost "
+            "framing in the rest of this app exists to work around."
+        )
+    else:
+        st.info(
+            "Live chart needs `data/diabetic_data_engineered.csv` on disk — run the app from the "
+            "project root (or `app/`) with the `data/` folder alongside it to see this rendered."
+        )
+
     st.warning(
         "**Why 2,423 encounters were removed before computing class balance:** these were "
         "encounters where the patient was discharged as **expired** or to **hospice** care. A "
@@ -248,6 +281,19 @@ values was compared directly and found to be nearly identical (~11.4% either way
 preserving every row instead of discarding data over a non-informative gap.
 """)
 
+    if df_eng is not None and {"weight", "readmitted_binary"}.issubset(df_eng.columns):
+        miss_rate = (
+            df_eng.assign(weight_status=df_eng["weight"].eq("Missing").map(
+                {True: "weight Missing", False: "weight Recorded"}))
+            .groupby("weight_status")["readmitted_binary"].mean() * 100
+        )
+        st.bar_chart(miss_rate)
+        st.caption(
+            f"Readmission rate is **{miss_rate.get('weight Missing', 0):.1f}%** when `weight` is "
+            f"missing vs. **{miss_rate.get('weight Recorded', 0):.1f}%** when it's recorded — "
+            "close enough to confirm missingness itself carries no signal here."
+        )
+
     st.subheader("🗂️ ICD-9 Diagnosis Grouping")
     st.markdown("""
 `diag_1`, `diag_2`, and `diag_3` arrive as **raw ICD-9 codes** — hundreds of distinct values, far
@@ -263,6 +309,17 @@ primary-diagnosis group — larger than Diabetes itself (8.7%)**. This makes cli
 patients are frequently admitted primarily for cardiovascular complications (heart disease, stroke)
 rather than for diabetes directly, since diabetes is a major driver of cardiovascular risk.
 """)
+
+    if df_eng is not None and "diag_1_group" in df_eng.columns:
+        diag_dist = (
+            df_eng["diag_1_group"].value_counts(normalize=True).mul(100).sort_values(ascending=False)
+        )
+        st.bar_chart(diag_dist)
+        st.caption(
+            f"`Circulatory` (**{diag_dist.get('Circulatory', 0):.1f}%**) is the single largest "
+            f"primary-diagnosis group — larger than `Diabetes` itself "
+            f"(**{diag_dist.get('Diabetes', 0):.1f}%**)."
+        )
 
     st.subheader("👀 Sample of the Engineered Dataset")
     if st.button("Show sample rows", key="about_model_sample_rows"):
@@ -532,6 +589,15 @@ with tab4:
     st.markdown("**ROC-AUC by model** — overall ranking quality, independent of threshold")
     st.bar_chart(results_df.set_index("Model")["ROC-AUC"])
 
+    # Real pre-generated ROC curves (all six models), already sitting on disk from the notebook.
+    with st.expander("📈 View actual ROC curves (all 6 models)"):
+        for roc_path in ["roc_curves.png", "../notebooks/roc_curves.png", "notebooks/roc_curves.png"]:
+            if os.path.exists(roc_path):
+                st.image(roc_path, use_container_width=True)
+                break
+        else:
+            st.info("`roc_curves.png` not found next to the app — copy it from `notebooks/` into `app/`.")
+
     st.divider()
 
     # ---- Cost-aware ranking (real file if present, else README-derived fallback) ----
@@ -600,47 +666,86 @@ with tab4:
     with st.expander("See full threshold table"):
         st.dataframe(threshold_df, use_container_width=True, hide_index=True)
 
+    # Real pre-generated version of the same sweep, straight from the notebook (matplotlib render).
+    with st.expander("🎚️ View original notebook chart (threshold_curve.png)"):
+        for tc_path in ["threshold_curve.png", "../notebooks/threshold_curve.png", "notebooks/threshold_curve.png"]:
+            if os.path.exists(tc_path):
+                st.image(tc_path, use_container_width=True)
+                break
+        else:
+            st.info("`threshold_curve.png` not found next to the app — copy it from `notebooks/` into `app/`.")
+
     st.divider()
 
     # ---- Confusion matrix for the deployed model ----
-    st.subheader("🧮 Confusion Matrix — Deployed Model (XGBoost, threshold = 0.40)")
+    deployed_threshold = float(best_row["Threshold"])
+    # Pull FN/FP at the actually-recommended threshold instead of hardcoding the 0.50 values,
+    # so this chart never drifts out of sync with the "recommended cutoff" callout above it.
+    if {"FN", "FP"}.issubset(threshold_df.columns):
+        fn = int(best_row["FN"])
+        fp = int(best_row["FP"])
+    else:
+        # Fallback dataset has no FN/FP columns — fall back to the cost-ranking @0.50 numbers.
+        fn, fp = 1004, 6255
+
+    st.subheader(f"🧮 Confusion Matrix — Deployed Model (XGBoost, threshold = {deployed_threshold:.2f})")
     st.caption(
         "This is the single most important diagnostic chart for a cost-aware, imbalanced-target "
         "model: it's the direct source of the False Negative / False Positive counts that drive "
         "every cost number above."
     )
-    try:
+
+    def _render_confusion_matrix(fn, fp, threshold, figsize, fontsize, dpi=140):
         import matplotlib.pyplot as plt
         import numpy as np
 
-        # Illustrative confusion matrix consistent with the cost-ranking FN/FP for XGBoost.
-        fn, fp = 1004, 6255
         total_pos = 11_311   # ~11.39% of 99,343
         total_neg = 99_343 - total_pos
         tp = total_pos - fn
         tn = total_neg - fp
         cm = np.array([[tn, fp], [fn, tp]])
 
-        fig, ax = plt.subplots(figsize=(4.5, 4))
+        fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
         im = ax.imshow(cm, cmap="Blues")
-        ax.set_xticks([0, 1]); ax.set_xticklabels(["Predicted No", "Predicted Yes"])
-        ax.set_yticks([0, 1]); ax.set_yticklabels(["Actual No", "Actual Yes"])
+        ax.set_xticks([0, 1]); ax.set_xticklabels(["Predicted No", "Predicted Yes"], fontsize=fontsize)
+        ax.set_yticks([0, 1]); ax.set_yticklabels(["Actual No", "Actual Yes"], fontsize=fontsize)
         for i in range(2):
             for j in range(2):
                 ax.text(j, i, f"{cm[i, j]:,}", ha="center", va="center",
-                        color="white" if cm[i, j] > cm.max() / 2 else "black", fontsize=13, fontweight="bold")
-        ax.set_title("Confusion Matrix — XGBoost @ 0.40")
+                        color="white" if cm[i, j] > cm.max() / 2 else "black",
+                        fontsize=fontsize + 1, fontweight="bold")
+        ax.set_title(f"Confusion Matrix — XGBoost @ {threshold:.2f}", fontsize=fontsize + 1)
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        st.pyplot(fig)
-    except ImportError:
-        st.warning("`matplotlib` not installed — run `pip install matplotlib` to render this chart.")
+        fig.tight_layout()
+        return fig
 
-    st.markdown("""
-- **True Negatives** (bottom-left of "no risk" outcomes) — correctly predicted no readmission.
-- **False Positives** — flagged as at-risk but did not return; costs a follow-up call ($500 each).
-- **False Negatives** — the costly error; a real readmission the model missed ($5,000 each).
+    try:
+        # Small by default — sits next to the legend instead of dominating the tab.
+        cm_col, legend_col = st.columns([1, 1])
+        with cm_col:
+            fig_small = _render_confusion_matrix(fn, fp, deployed_threshold, figsize=(3.4, 3.0), fontsize=8)
+            st.pyplot(fig_small, use_container_width=False)
+        with legend_col:
+            st.markdown(f"""
+- **True Negatives** — correctly predicted no readmission.
+- **False Positives** ({fp:,}) — flagged as at-risk but did not return; costs a follow-up call ($500 each).
+- **False Negatives** ({fn:,}) — the costly error; a real readmission the model missed ($5,000 each).
 - **True Positives** — correctly caught readmissions, the whole point of the system.
 """)
+
+        with st.expander("🔍 View larger"):
+            fig_large = _render_confusion_matrix(fn, fp, deployed_threshold, figsize=(6, 5.2), fontsize=12)
+            st.pyplot(fig_large, use_container_width=False)
+
+            # If the real pre-generated 6-model comparison image is on disk, offer it too —
+            # it's already sitting in app/ and gives the full picture instead of just XGBoost.
+            for cm_img_path in ["confusion_matrices.png", "../notebooks/confusion_matrices.png"]:
+                if os.path.exists(cm_img_path):
+                    st.caption("All six models, side by side:")
+                    st.image(cm_img_path, use_container_width=True)
+                    break
+    except ImportError:
+        st.warning("`matplotlib` not installed — run `pip install matplotlib` to render this chart.")
 
     st.divider()
     st.subheader("📈 EDA: The Strongest Predictor — `number_inpatient`")
