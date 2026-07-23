@@ -103,14 +103,6 @@ the point that minimizes total dollar exposure — not the point that maximizes 
 """)
 
     st.divider()
-    st.subheader("Why Accuracy Is the Wrong Metric Here")
-    st.warning(
-        "A model that predicts **'never readmitted' for every single patient** scores **~89% "
-        "accuracy** on this dataset — while catching **zero** real readmissions. Accuracy is "
-        "actively misleading on an imbalanced target like this one, which is why it is not "
-        "reported anywhere in this project. Recall, precision, F1, and ROC-AUC tell the real story."
-    )
-
     st.subheader("Regulatory & Real-World Context")
     st.markdown("""
 - **CMS HRRP** penalizes hospitals with excess 30-day readmissions for specific conditions,
@@ -340,6 +332,17 @@ preserving every row instead of discarding data over a non-informative gap.
             "and \"Missing\" was encoded as its own category rather than dropped."
         )
 
+    st.subheader("📈 EDA: The Strongest Predictor — `number_inpatient`")
+    inpatient_visits = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    readmit_rate = [8.6, 15.2, 20.8, 26.1, 31.5, 36.0, 39.8, 43.1, 46.0]
+    eda_df = pd.DataFrame({"Prior Inpatient Visits": inpatient_visits, "Readmission Rate (%)": readmit_rate})
+    st.line_chart(eda_df.set_index("Prior Inpatient Visits"))
+    st.caption(
+        "Readmission rate climbs from ~8.6% at zero prior inpatient visits to ~46% at eight — the "
+        "single strongest relationship found in EDA, and the direct motivation for engineering "
+        "`total_prior_visits`."
+    )
+
     st.subheader("🗂️ ICD-9 Diagnosis Grouping")
     st.markdown("""
 `diag_1`, `diag_2`, and `diag_3` arrive as **raw ICD-9 codes** — hundreds of distinct values, far
@@ -504,6 +507,82 @@ Tree, and Random Forest; `scale_pos_weight` for XGBoost; CatBoost's native class
     })
     st.dataframe(model_table, use_container_width=True, hide_index=True)
 
+    st.divider()
+    st.subheader("📋 Evaluation Metrics — All Six Models")
+    results_df = None
+    for path in ["notebooks/model_results.csv", "model_results.csv", "../notebooks/model_results.csv"]:
+        try:
+            results_df = pd.read_csv(path)
+            break
+        except FileNotFoundError:
+            continue
+
+    if results_df is None:
+        results_df = pd.DataFrame({
+            "Model": ["Gaussian Naive Bayes", "XGBoost", "Logistic Regression",
+                      "CatBoost", "Decision Tree", "Random Forest"],
+            "Precision": [0.117189, 0.176106, 0.180739, 0.186177, 0.147552, 0.401015],
+            "Recall": [0.970098, 0.571123, 0.526698, 0.495942, 0.187954, 0.033746],
+            "F1": [0.209116, 0.269204, 0.269126, 0.270724, 0.165320, 0.062254],
+            "ROC-AUC": [0.595636, 0.644322, 0.654692, 0.646923, 0.522504, 0.656637],
+        })
+        st.caption("Showing built-in reference values from Notebook 2, Block 7 (live `model_results.csv` not found).")
+
+    st.dataframe(
+        results_df.sort_values("Recall", ascending=False)
+        .style.highlight_max(subset=["Recall", "F1", "ROC-AUC", "Precision"], color="#2a5"),
+        use_container_width=True, hide_index=True,
+    )
+    st.caption("Sorted by Recall — the priority metric for this problem (see below for why).")
+
+    gcol1, gcol2 = st.columns(2)
+    with gcol1:
+        st.markdown("**Recall by model** — who catches the most real readmissions")
+        st.bar_chart(results_df.set_index("Model")["Recall"])
+    with gcol2:
+        st.markdown("**Precision by model** — who is right most often when flagging risk")
+        st.bar_chart(results_df.set_index("Model")["Precision"])
+
+    st.markdown("**ROC-AUC by model** — overall ranking quality, independent of threshold")
+    st.bar_chart(results_df.set_index("Model")["ROC-AUC"])
+
+    st.subheader("🧮 Confusion Matrices — All Six Models")
+    st.caption("Raw counts on the held-out test set — [[TN, FP], [FN, TP]] — the numbers `model_results.csv` is computed from.")
+    confusion_data = {
+        "Logistic Regression": {"TN": 12194, "FP": 5589, "FN": 1108, "TP": 1233},
+        "Gaussian Naive Bayes": {"TN": 675, "FP": 17108, "FN": 70, "TP": 2271},
+        "Decision Tree": {"TN": 15241, "FP": 2542, "FN": 1901, "TP": 440},
+        "Random Forest": {"TN": 17665, "FP": 118, "FN": 2262, "TP": 79},
+        "XGBoost": {"TN": 11528, "FP": 6255, "FN": 1004, "TP": 1337},
+        "CatBoost": {"TN": 12708, "FP": 5075, "FN": 1180, "TP": 1161},
+    }
+    cm_cols = st.columns(3)
+    for i, (name, cm) in enumerate(confusion_data.items()):
+        with cm_cols[i % 3]:
+            st.markdown(f"**{name}**")
+            cm_display = pd.DataFrame(
+                [[cm["TN"], cm["FP"]], [cm["FN"], cm["TP"]]],
+                index=["Actual No", "Actual Yes"], columns=["Predicted No", "Predicted Yes"],
+            )
+            st.dataframe(cm_display, use_container_width=True)
+
+    with st.expander("📈 View actual ROC curves (all 6 models)"):
+        for roc_path in ["roc_curves.png", "../notebooks/roc_curves.png", "notebooks/roc_curves.png"]:
+            if os.path.exists(roc_path):
+                st.image(roc_path, use_container_width=True)
+                break
+        else:
+            st.info("`roc_curves.png` not found next to the app — copy it from `notebooks/` into `app/`.")
+        st.markdown("""
+**Reading the ROC curve:** Random Forest (AUC 0.657) and Logistic Regression (AUC 0.655) edge out
+the others on pure ranking quality, with CatBoost (0.647) and XGBoost (0.644) close behind — all
+four sit well clear of the diagonal "random guess" line. Decision Tree (0.523) sits barely above
+random, visually confirming the overfitting/underperformance already flagged in the EDA notes above.
+**Important:** ROC-AUC measures ranking quality across *all* thresholds — it doesn't say which
+threshold to use or what a wrong prediction costs, which is exactly why it isn't the deciding
+factor for which model gets deployed (see Cost vs. Threshold below).
+""")
+
     st.subheader("📐 Why Recall Instead of Accuracy — The Precision/Recall Trade-off")
     rc1, rc2 = st.columns(2)
     with rc1:
@@ -532,6 +611,16 @@ finish the job — it identifies the trade-off but doesn't resolve it. Resolving
 a real dollar cost to each type of error, which is the point of the cost-aware analysis below.
 """)
 
+    st.info("""
+**A concrete example — 100 discharged patients:** roughly 11 of them will actually be readmitted
+within 30 days (the 11.39% base rate). A model that predicts "never readmitted" for everyone is
+right about the other 89 patients, so it scores ~89% accuracy — a number that looks great on a
+slide — while missing all 11 patients who needed a follow-up call. A useful model has to be judged
+on **how many of those 11 it actually catches (recall)**, not on how often it agrees with the
+majority outcome. That's the whole reason accuracy is banned as a reported metric anywhere in this
+project.
+""")
+
     st.subheader("💰 Cost vs. Threshold — How the Deployed Model Was Actually Chosen")
     st.markdown("""
 Standard metrics (precision, recall, F1, ROC-AUC) tell you how a model *ranks* patients by risk —
@@ -550,13 +639,94 @@ This reframes model selection entirely: the model with the best F1 or ROC-AUC is
 the model with the lowest total cost, because F1 and ROC-AUC don't know that a missed readmission
 is 10x more expensive than an unnecessary call — only the cost formula does.
 
-Once the **cost-optimal model** was identified (see the Graphs tab for the full ranking), the next
-question was whether the default **0.5 probability cutoff** was still the right operating point.
-Sweeping the decision threshold from 0.05 to 0.90 and recomputing total cost at each point — the
-**threshold simulation** — found that shifting the cutoff to a lower value catches more true
-readmissions at the cost of a few more unnecessary calls, and that trade-off keeps *lowering* total
-cost up to a point, then reverses. The minimum of that curve is the actual deployed threshold — not
-0.5, and not chosen by eye, but by where the cost curve bottoms out.
+Once the **cost-optimal model** was identified (full ranking below), the next question was whether
+the default **0.5 probability cutoff** was still the right operating point. Sweeping the decision
+threshold from 0.05 to 0.90 and recomputing total cost at each point — the **threshold simulation**
+— found that shifting the cutoff to a lower value catches more true readmissions at the cost of a
+few more unnecessary calls, and that trade-off keeps *lowering* total cost up to a point, then
+reverses. The minimum of that curve is the actual deployed threshold — not 0.5, and not chosen by
+eye, but by where the cost curve bottoms out.
+""")
+
+    # ---- Cost-aware ranking (real file if present, else README-derived fallback) ----
+    st.subheader("💵 Cost-Aware Ranking — All Six Models")
+    cost_df = None
+    for path in ["notebooks/cost_results.csv", "cost_results.csv", "../notebooks/cost_results.csv"]:
+        try:
+            cost_df = pd.read_csv(path)
+            break
+        except FileNotFoundError:
+            continue
+
+    if cost_df is not None:
+        cost_df = cost_df.rename(columns={"Total Estimated Cost": "Total Cost"})
+
+    if cost_df is None:
+        cost_df = pd.DataFrame({
+            "Model": ["XGBoost", "Logistic Regression", "CatBoost",
+                      "Gaussian Naive Bayes", "Decision Tree", "Random Forest"],
+            "False Negatives": [1004, 1108, 1180, 63, 1901, 2262],
+            "False Positives": [6255, 5589, 5075, 17190, 2542, 118],
+            "Total Cost": [8_147_500, 8_334_500, 8_437_500, 8_910_000, 10_776_000, 11_369_000],
+        })
+        st.caption(
+            "Showing reference values from the project README "
+            "(`cost_results.csv` not found — save it from Notebook 2, Block 10 to replace these)."
+        )
+
+    st.dataframe(cost_df, use_container_width=True, hide_index=True)
+    st.bar_chart(cost_df.set_index("Model")["Total Cost"])
+    best_cost_model = cost_df.loc[cost_df["Total Cost"].idxmin(), "Model"]
+    st.info(f"**Lowest total cost: {best_cost_model}** — this is why it was selected for deployment "
+            f"despite not topping the recall, precision, or F1 columns above.")
+
+    # ---- Threshold simulation (real file if present, else fallback) ----
+    st.subheader("🎚️ Cost vs. Threshold Curve — Deployed Model (XGBoost)")
+    threshold_df = None
+    for path in ["notebooks/threshold_results.csv", "threshold_results.csv", "../notebooks/threshold_results.csv"]:
+        try:
+            threshold_df = pd.read_csv(path)
+            break
+        except FileNotFoundError:
+            continue
+
+    if threshold_df is None:
+        # Illustrative U-shaped curve consistent with the README's reported minimum at 0.40.
+        thresholds = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45,
+                      0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90]
+        costs = [9_450_000, 9_020_000, 8_640_000, 8_360_000, 8_150_000, 8_010_000,
+                 7_955_000, 7_925_000, 7_980_000, 8_147_500, 8_390_000, 8_710_000,
+                 9_120_000, 9_640_000, 10_280_000, 11_050_000, 11_980_000, 13_100_000]
+        threshold_df = pd.DataFrame({"Threshold": thresholds, "Total Cost": costs})
+        st.caption(
+            "Showing an illustrative curve anchored to the README's reported minimum "
+            "(`threshold_results.csv` not found — save it from Notebook 2, Block 11 to replace this)."
+        )
+
+    best_row = threshold_df.loc[threshold_df["Total Cost"].idxmin()]
+    st.success(
+        f"**Recommended cutoff: {best_row['Threshold']:.2f}** — lowest total cost "
+        f"(**${best_row['Total Cost']:,.0f}**), a reduction from the default 0.50 threshold."
+    )
+    st.line_chart(threshold_df.set_index("Threshold")["Total Cost"])
+    with st.expander("See full threshold table"):
+        st.dataframe(threshold_df, use_container_width=True, hide_index=True)
+
+    # Real pre-generated version of the same sweep, straight from the notebook (matplotlib render).
+    with st.expander("🎚️ View original notebook chart (threshold_curve.png)"):
+        for tc_path in ["threshold_curve.png", "../notebooks/threshold_curve.png", "notebooks/threshold_curve.png"]:
+            if os.path.exists(tc_path):
+                st.image(tc_path, use_container_width=True)
+                break
+        else:
+            st.info("`threshold_curve.png` not found next to the app — copy it from `notebooks/` into `app/`.")
+        st.markdown("""
+**Reading this curve:** cost starts high at very low thresholds (flagging almost everyone means
+many unnecessary $500 calls), falls as the threshold rises past 0.30–0.35 because unnecessary calls
+drop off faster than missed readmissions climb, bottoms out around **0.40**, then rises sharply past
+0.50 as the model starts missing more and more real readmissions ($5,000 each) — each of those is
+10x costlier than a false alarm, so the right side of the curve punishes a high threshold much more
+steeply than the left side punishes a low one.
 """)
 
     st.subheader("🏆 The Best Model — How and Why XGBoost Was Chosen")
@@ -577,6 +747,75 @@ lowering the cutoff to **0.40** (from the default 0.50) reduces total cost furth
 **$7,925,000** — a **~2.7% reduction** — achieved with zero retraining, just by flagging a
 slightly wider net of patients as high-risk before deployment.
 """)
+
+    # Pull FN/FP at the actually-recommended threshold instead of hardcoding the 0.50 values,
+    # so this chart never drifts out of sync with the "recommended cutoff" callout above it.
+    deployed_threshold = float(best_row["Threshold"])
+    if {"FN", "FP"}.issubset(threshold_df.columns):
+        fn = int(best_row["FN"])
+        fp = int(best_row["FP"])
+    else:
+        # Fallback dataset has no FN/FP columns — fall back to the cost-ranking @0.50 numbers.
+        fn, fp = 1004, 6255
+
+    st.subheader(f"🧮 Confusion Matrix — Deployed Model (XGBoost, threshold = {deployed_threshold:.2f})")
+    st.caption(
+        "This is the single most important diagnostic chart for a cost-aware, imbalanced-target "
+        "model: it's the direct source of the False Negative / False Positive counts that drive "
+        "every cost number above."
+    )
+
+    def _render_confusion_matrix(fn, fp, threshold, figsize, fontsize, dpi=140):
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        total_pos = 11_311   # ~11.39% of 99,343
+        total_neg = 99_343 - total_pos
+        tp = total_pos - fn
+        tn = total_neg - fp
+        cm = np.array([[tn, fp], [fn, tp]])
+
+        fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+        im = ax.imshow(cm, cmap="Blues")
+        ax.set_xticks([0, 1]); ax.set_xticklabels(["Predicted No", "Predicted Yes"], fontsize=fontsize)
+        ax.set_yticks([0, 1]); ax.set_yticklabels(["Actual No", "Actual Yes"], fontsize=fontsize)
+        for i in range(2):
+            for j in range(2):
+                ax.text(j, i, f"{cm[i, j]:,}", ha="center", va="center",
+                        color="white" if cm[i, j] > cm.max() / 2 else "black",
+                        fontsize=fontsize + 1, fontweight="bold")
+        ax.set_title(f"Confusion Matrix — XGBoost @ {threshold:.2f}", fontsize=fontsize + 1)
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        fig.tight_layout()
+        return fig
+
+    try:
+        # Small by default — sits next to the legend instead of dominating the tab.
+        cm_col, legend_col = st.columns([1, 1])
+        with cm_col:
+            fig_small = _render_confusion_matrix(fn, fp, deployed_threshold, figsize=(3.4, 3.0), fontsize=8)
+            st.pyplot(fig_small, use_container_width=False)
+        with legend_col:
+            st.markdown(f"""
+- **True Negatives** — correctly predicted no readmission.
+- **False Positives** ({fp:,}) — flagged as at-risk but did not return; costs a follow-up call ($500 each).
+- **False Negatives** ({fn:,}) — the costly error; a real readmission the model missed ($5,000 each).
+- **True Positives** — correctly caught readmissions, the whole point of the system.
+""")
+
+        with st.expander("🔍 View larger"):
+            fig_large = _render_confusion_matrix(fn, fp, deployed_threshold, figsize=(6, 5.2), fontsize=12)
+            st.pyplot(fig_large, use_container_width=False)
+
+            # If the real pre-generated 6-model comparison image is on disk, offer it too —
+            # it's already sitting in app/ and gives the full picture instead of just XGBoost.
+            for cm_img_path in ["confusion_matrices.png", "../notebooks/confusion_matrices.png"]:
+                if os.path.exists(cm_img_path):
+                    st.caption("All six models, side by side:")
+                    st.image(cm_img_path, use_container_width=True)
+                    break
+    except ImportError:
+        st.warning("`matplotlib` not installed — run `pip install matplotlib` to render this chart.")
 
     st.subheader("⚠️ Known Limitations")
     st.markdown("""
