@@ -1,0 +1,7 @@
+Model,False Negatives,False Positives,Total Estimated Cost
+XGBoost,1004,6255,8147500
+Logistic Regression,1108,5589,8334500
+CatBoost,1180,5075,8437500
+Gaussian Naive Bayes,63,17190,8910000
+Decision Tree,1901,2542,10776000
+Random Forest,2262,118,11369000
