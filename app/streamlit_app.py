@@ -3,7 +3,7 @@ import streamlit as st
 import requests
 import pandas as pd
 
-st.set_page_config(page_title="Readmission Risk Predictor", layout="wide", page_icon="🏥")
+st.set_page_config(page_title="Readmission Risk Predictor", layout="centered", page_icon="🏥")
 
 
 @st.cache_data
@@ -44,6 +44,14 @@ st.markdown("""
 }
 .note-card h4 { margin-top: 0; }
 .metric-big { font-size: 2.6rem; font-weight: 700; margin: 0; }
+.main .block-container {
+    max-width: 1080px;
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+}
+.main .block-container .stMarkdown, .main .block-container .stMarkdown p {
+    max-width: 100%;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -54,9 +62,8 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🧩 The Problem", "📊 The Dataset", "🧠 About the Model", "📈 Graphs & Visualizations", "🔮 Prediction"
 ])
 
-# =====================================================================================
 # TAB 1: THE PROBLEM
-# =====================================================================================
+
 with tab1:
     st.header("The Problem We're Solving")
 
@@ -332,18 +339,7 @@ preserving every row instead of discarding data over a non-informative gap.
             "and \"Missing\" was encoded as its own category rather than dropped."
         )
 
-    st.subheader("📈 EDA: The Strongest Predictor — `number_inpatient`")
-    inpatient_visits = [0, 1, 2, 3, 4, 5, 6, 7, 8]
-    readmit_rate = [8.6, 15.2, 20.8, 26.1, 31.5, 36.0, 39.8, 43.1, 46.0]
-    eda_df = pd.DataFrame({"Prior Inpatient Visits": inpatient_visits, "Readmission Rate (%)": readmit_rate})
-    st.line_chart(eda_df.set_index("Prior Inpatient Visits"))
-    st.caption(
-        "Readmission rate climbs from ~8.6% at zero prior inpatient visits to ~46% at eight — the "
-        "single strongest relationship found in EDA, and the direct motivation for engineering "
-        "`total_prior_visits`."
-    )
-
-    st.subheader("🗂️ ICD-9 Diagnosis Grouping")
+    st.subheader("️ ICD-9 Diagnosis Grouping")
     st.markdown("""
 `diag_1`, `diag_2`, and `diag_3` arrive as **raw ICD-9 codes** — hundreds of distinct values, far
 too high-cardinality to one-hot encode directly without exploding the feature space and starving
@@ -444,6 +440,46 @@ an important sanity check, since a "diabetes readmission" model built only on di
 encounters would have missed the majority of the actual patient population.
 """)
 
+    st.markdown("**📊 The two findings above, made visible:**")
+    ecol1, ecol2 = st.columns(2)
+
+    with ecol1:
+        st.markdown("**📈 EDA: The Strongest Predictor — `number_inpatient`**")
+        if df_eng is not None and {"number_inpatient", "readmitted_binary"}.issubset(df_eng.columns):
+            rate_by_inpatient = (
+                df_eng[df_eng["number_inpatient"] <= 8]
+                .groupby("number_inpatient")["readmitted_binary"].mean().mul(100)
+            )
+            rate_by_inpatient.index.name = "Prior Inpatient Visits"
+            st.line_chart(rate_by_inpatient)
+        else:
+            inpatient_visits = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+            readmit_rate = [8.6, 15.2, 20.8, 26.1, 31.5, 36.0, 39.8, 43.1, 46.0]
+            eda_df = pd.DataFrame({"Prior Inpatient Visits": inpatient_visits, "Readmission Rate (%)": readmit_rate})
+            st.line_chart(eda_df.set_index("Prior Inpatient Visits"))
+            st.caption("Showing built-in reference values (live engineered dataset not found).")
+        st.caption(
+            "Readmission rate climbs from ~8.6% at zero prior inpatient visits to ~46% at eight — "
+            "the single strongest relationship found in EDA, and the direct motivation for "
+            "engineering `total_prior_visits` (see Feature Engineering below)."
+        )
+
+    with ecol2:
+        st.markdown("**🗂️ EDA: Diagnosis Group Distribution**")
+        if df_eng is not None and "diag_1_group" in df_eng.columns:
+            diag_dist_eda = df_eng["diag_1_group"].value_counts(normalize=True).mul(100).sort_values(ascending=False)
+            diag_dist_eda.index.name = "Group"
+            st.bar_chart(diag_dist_eda)
+        else:
+            diag_dist_fallback = pd.DataFrame({
+                "Group": ["Circulatory", "Diabetes", "Respiratory", "Digestive", "Injury",
+                          "Musculoskeletal", "Genitourinary", "Neoplasms", "Other"],
+                "Share of Encounters (%)": [29.9, 8.7, 9.1, 8.9, 6.8, 5.2, 4.6, 3.4, 23.4],
+            })
+            st.bar_chart(diag_dist_fallback.set_index("Group"))
+            st.caption("Showing built-in reference values (live engineered dataset not found).")
+        st.caption("Circulatory conditions are the largest primary-diagnosis group — larger than Diabetes itself.")
+
     st.divider()
     st.subheader("🛠️ Feature Engineering — What Was Done, and Why")
 
@@ -484,6 +520,49 @@ encounters would have missed the majority of the actual patient population.
   outperform on **temporal, multi-encounter** patient sequences. This dataset is single-encounter
   and tabular, so a DNN adds no literature-backed benefit over a well-tuned ensemble here.
 """)
+
+    st.markdown("**📊 Two of the engineered features, checked against the actual data:**")
+    fcol1, fcol2 = st.columns(2)
+
+    with fcol1:
+        st.markdown("**`total_prior_visits` vs. readmission rate**")
+        if df_eng is not None and {"total_prior_visits", "readmitted_binary"}.issubset(df_eng.columns):
+            tpv_rate = (
+                df_eng[df_eng["total_prior_visits"] <= 8]
+                .groupby("total_prior_visits")["readmitted_binary"].mean().mul(100)
+            )
+            tpv_rate.index.name = "Total Prior Visits"
+            st.line_chart(tpv_rate)
+            st.caption(
+                f"Readmission rate rises from **{tpv_rate.iloc[0]:.1f}%** at 0 combined prior "
+                f"visits to **{tpv_rate.iloc[-1]:.1f}%** at 8 — folding outpatient + emergency + "
+                "inpatient into one feature preserves the same upward trend `number_inpatient` "
+                "showed alone, while also using signal from the other two visit types instead of "
+                "leaving it on the table."
+            )
+        else:
+            st.info("Live chart needs `data/diabetic_data_engineered.csv` on disk.")
+
+    with fcol2:
+        st.markdown("**`diabetes_related` — why it's kept despite being weak**")
+        if df_eng is not None and {"diabetes_related", "readmitted_binary", "diag_1_group"}.issubset(df_eng.columns):
+            primary_pct = (df_eng["diag_1_group"] == "Diabetes").mean() * 100
+            anywhere_pct = df_eng["diabetes_related"].mean() * 100
+            rate_by_flag = df_eng.groupby("diabetes_related")["readmitted_binary"].mean().mul(100)
+            coverage_df = pd.DataFrame({
+                "Definition": ["Primary diagnosis only", "Anywhere in diag 1/2/3"],
+                "Share of Encounters (%)": [primary_pct, anywhere_pct],
+            })
+            st.bar_chart(coverage_df.set_index("Definition"))
+            st.caption(
+                f"Broadening from primary-only (**{primary_pct:.1f}%**) to anywhere-in-record "
+                f"(**{anywhere_pct:.1f}%**) more than quadruples coverage, but the readmission "
+                f"rate barely moves (**{rate_by_flag.get(0, 0):.1f}%** vs "
+                f"**{rate_by_flag.get(1, 0):.1f}%**) — visual confirmation of why it's kept for "
+                "interpretability/filtering rather than for its predictive strength."
+            )
+        else:
+            st.info("Live chart needs `data/diabetic_data_engineered.csv` on disk.")
 
     st.divider()
     st.subheader("🤖 Models Compared & Why")
@@ -1031,27 +1110,6 @@ with tab4:
                     break
     except ImportError:
         st.warning("`matplotlib` not installed — run `pip install matplotlib` to render this chart.")
-
-    st.divider()
-    st.subheader("📈 EDA: The Strongest Predictor — `number_inpatient`")
-    inpatient_visits = [0, 1, 2, 3, 4, 5, 6, 7, 8]
-    readmit_rate = [8.6, 15.2, 20.8, 26.1, 31.5, 36.0, 39.8, 43.1, 46.0]
-    eda_df = pd.DataFrame({"Prior Inpatient Visits": inpatient_visits, "Readmission Rate (%)": readmit_rate})
-    st.line_chart(eda_df.set_index("Prior Inpatient Visits"))
-    st.caption(
-        "Readmission rate climbs from ~8.6% at zero prior inpatient visits to ~46% at eight — the "
-        "single strongest relationship found in EDA, and the direct motivation for engineering "
-        "`total_prior_visits`."
-    )
-
-    st.subheader("🗂️ EDA: Diagnosis Group Distribution")
-    diag_dist = pd.DataFrame({
-        "Group": ["Circulatory", "Diabetes", "Respiratory", "Digestive", "Injury",
-                  "Musculoskeletal", "Genitourinary", "Neoplasms", "Other"],
-        "Share of Encounters (%)": [29.9, 8.7, 9.1, 8.9, 6.8, 5.2, 4.6, 3.4, 23.4],
-    })
-    st.bar_chart(diag_dist.set_index("Group"))
-    st.caption("Circulatory conditions are the largest primary-diagnosis group — larger than Diabetes itself.")
 
 # =====================================================================================
 # TAB 5: PREDICTION

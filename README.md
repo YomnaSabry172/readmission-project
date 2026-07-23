@@ -211,12 +211,13 @@ The risk note is generated live via Groq (`llama-3.3-70b-versatile`), grounded s
 
 ## Dashboard
 
-The Streamlit app is organized into four tabs:
+The Streamlit app is organized into five tabs:
 
-- **🔮 Predict** — enter a patient's details and receive a live readmission probability plus an LLM-generated risk note.
-- **📊 Data Explorer** — sample rows from the engineered dataset alongside the headline EDA findings (target imbalance, strongest predictors, diagnosis distribution).
-- **📈 Model Insights** — side-by-side evaluation metrics for all six models, the cost-aware ranking, and the cost-vs-threshold curve for the deployed model.
-- **ℹ️ About** — project summary, modeling approach, and known limitations, written for a non-technical reviewer.
+- **🧩 The Problem** — project motivation, business value, and the hospital-readmission regulatory context.
+- **📊 The Dataset** — dataset overview, feature groups, and the engineered dataset sample plus supporting file descriptions.
+- **🧠 About the Model** — feature engineering, model comparisons, cost-aware selection, threshold simulation, and limitations.
+- **📈 Graphs & Visualizations** — evaluation metrics, cost-aware ranking, threshold curve, and visual diagnostics.
+- **🔮 Prediction** — enter patient details and get a live readmission probability with a model-backed risk note.
 
 ## Deployment
 
@@ -246,6 +247,14 @@ Not yet publicly deployed. Planned path:
 ## Team
 
 Five-person team project, built with rotating pipeline ownership — every member worked across EDA, feature engineering, modeling, the cost/novelty analysis layer, and deployment rather than specializing in a single stage.
+
+## Contributors
+
+- [Yomna Sabry](https://github.com/YomnaSabry172)
+- [Ahmed Mohamed Ghareeb](https://github.com/ahmedmohamed1807)
+- [Mennaallah Mohammed](https://github.com/mennaallah275)
+- [Fady Nasser](https://github.com/fadynasser729-cpu)
+- [Hana Hassan](https://github.com/hanahassan7)
 
 ## License
 
