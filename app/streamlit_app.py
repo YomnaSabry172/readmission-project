@@ -832,12 +832,3 @@ with tab5:
                 st.error("Could not reach the prediction API. Make sure `uvicorn main:app --reload` is running (see setup steps below).")
             except Exception as e:
                 st.error(f"Something went wrong: {e}")
-
-    with st.expander("ℹ️ Why isn't 'diabetes in diagnosis' a separate input above?"):
-        st.markdown("""
-`diabetes_related` is an **engineered feature**, not something a user should type in directly — it
-is automatically derived as `1` if `"Diabetes"` appears in *any* of the three diagnosis group
-fields you already selected above (Primary / Secondary / Additional), and `0` otherwise. Exposing
-it as its own dropdown would let it contradict the diagnosis fields already entered, so it's
-computed silently in the background instead — currently: **{}**.
-""".format("Diabetes-related" if diabetes_related else "Not diabetes-related"))
