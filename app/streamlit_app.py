@@ -58,8 +58,9 @@ st.markdown("""
 st.title("🏥 Hospital Readmission Risk Predictor")
 st.caption("Cost-aware ML system predicting 30-day readmission risk; UCI Diabetes 130-US Hospitals dataset")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "🧩 The Problem", "📊 The Dataset", "🧠 About the Model", "📈 Graphs & Visualizations", "🔮 Prediction"
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "🧩 The Problem", "📊 The Dataset", "🧠 About the Model", "📈 Graphs & Visualizations",
+    "🔮 Prediction", "💬 AI Chat Assistant"
 ])
 
 # TAB 1: THE PROBLEM
@@ -1280,3 +1281,99 @@ with tab5:
                 st.error("Could not reach the prediction API. Make sure `uvicorn main:app --reload` is running (see setup steps below).")
             except Exception as e:
                 st.error(f"Something went wrong: {e}")
+# =====================================================================================
+# TAB 6: AI CHAT ASSISTANT
+# =====================================================================================
+with tab6:
+    st.header("💬 AI Chat Assistant")
+    st.write(
+        "Describe a patient in plain language instead of filling the form. Anything you "
+        "don't mention is filled in with a documented default (the same 'typical patient' "
+        "values used as this app's own form defaults), and the model still runs on the "
+        "full 30-feature profile behind the scenes."
+    )
+
+    CHAT_API_URL = os.environ.get("API_BASE_URL", "http://127.0.0.1:8000")
+
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []  # list of {role, content}
+    if "chat_last_result" not in st.session_state:
+        st.session_state.chat_last_result = None
+
+    for turn in st.session_state.chat_history:
+        with st.chat_message(turn["role"]):
+            st.markdown(turn["content"])
+
+    user_msg = st.chat_input("e.g. 68-year-old diabetic woman, 3rd hospital stay this year, on insulin...")
+
+    if user_msg:
+        st.session_state.chat_history.append({"role": "user", "content": user_msg})
+        with st.chat_message("user"):
+            st.markdown(user_msg)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Reading patient details and predicting..."):
+                try:
+                    payload = {
+                        "message": user_msg,
+                        "history": st.session_state.chat_history[:-1],
+                        "generate_report": False,
+                    }
+                    resp = requests.post(f"{CHAT_API_URL}/chat", json=payload, timeout=30)
+                    resp.raise_for_status()
+                    result = resp.json()
+                    st.session_state.chat_last_result = result
+
+                    prob = result["readmission_probability"]
+                    if prob >= 0.5:
+                        badge, emoji = "High Risk", "🔴"
+                    elif prob >= 0.3:
+                        badge, emoji = "Moderate Risk", "🟡"
+                    else:
+                        badge, emoji = "Low Risk", "🟢"
+
+                    st.markdown(f"**{emoji} {badge} — {prob:.1%} predicted 30-day readmission probability**")
+                    st.write(result["risk_note"])
+
+                    extracted = result["fields_extracted_from_message"]
+                    filled = result["fields_filled_with_defaults"]
+                    st.caption(
+                        f"Extracted from your message: {', '.join(extracted) if extracted else 'nothing specific — used a fully default patient'}"
+                    )
+                    with st.expander(f"Show {len(filled)} field(s) filled with defaults"):
+                        st.write(", ".join(filled) if filled else "none")
+
+                    st.session_state.chat_history.append(
+                        {"role": "assistant", "content": f"{badge} ({prob:.1%}): {result['risk_note']}"}
+                    )
+                except requests.exceptions.ConnectionError:
+                    st.error("Could not reach the prediction API. Make sure the FastAPI backend is running.")
+                except Exception as e:
+                    st.error(f"Something went wrong: {e}")
+
+    if st.session_state.chat_last_result:
+        st.divider()
+        if st.button("📄 Generate full AI report for the last patient", use_container_width=True):
+            with st.spinner("Generating full report..."):
+                try:
+                    r = st.session_state.chat_last_result
+                    report_payload = {
+                        "patient": r["patient_used"],
+                        "readmission_probability": r["readmission_probability"],
+                        "fields_filled_with_defaults": r["fields_filled_with_defaults"],
+                    }
+                    resp = requests.post(f"{CHAT_API_URL}/report", json=report_payload, timeout=30)
+                    resp.raise_for_status()
+                    st.markdown(resp.json()["full_report"])
+                except Exception as e:
+                    st.error(f"Could not generate report: {e}")
+
+    st.divider()
+    st.subheader("🌐 Standalone chat widget")
+    st.markdown(
+        "This same chatbot also exists as a single, self-contained HTML page "
+        "(`app/static/chat_widget.html`) that talks to the FastAPI backend directly — "
+        "open it in any browser, or embed it in an iframe on any site, with no Streamlit "
+        "or Python runtime needed on the viewer's end. Once the backend is deployed, point "
+        "the widget's 'API' field at its public URL."
+    )

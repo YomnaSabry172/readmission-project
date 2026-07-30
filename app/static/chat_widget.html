@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Readmission Risk Assistant</title>
+<style>
+  :root {
+    --bg: #0f1420;
+    --panel: #161d2e;
+    --bubble-user: #2f6fed;
+    --bubble-bot: #1f2940;
+    --accent: #4fd1a5;
+    --text: #eef1f6;
+    --muted: #8b95ab;
+    --danger: #ff6b6b;
+    --warn: #ffb84f;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    height: 100%; margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  #app { display: flex; flex-direction: column; height: 100vh; max-width: 720px; margin: 0 auto; }
+  header {
+    padding: 14px 18px; background: var(--panel);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; flex: 1; }
+  header .config { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  header input[type=text] {
+    background: #0d1220; border: 1px solid rgba(255,255,255,0.1); color: var(--text);
+    border-radius: 6px; padding: 4px 8px; font-size: 12px; width: 170px;
+  }
+  #messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 82%; padding: 10px 14px; border-radius: 14px; line-height: 1.45; font-size: 14px; white-space: pre-wrap; }
+  .msg.user { align-self: flex-end; background: var(--bubble-user); border-bottom-right-radius: 4px; }
+  .msg.bot { align-self: flex-start; background: var(--bubble-bot); border-bottom-left-radius: 4px; }
+  .msg.system { align-self: center; color: var(--muted); font-size: 12px; background: transparent; }
+  .card { border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 10px 12px; margin-top: 8px; background: rgba(255,255,255,0.03); }
+  .risk-badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-weight: 600; font-size: 12px; }
+  .risk-high { background: rgba(255,107,107,0.18); color: var(--danger); }
+  .risk-mod  { background: rgba(255,184,79,0.18); color: var(--warn); }
+  .risk-low  { background: rgba(79,209,165,0.18); color: var(--accent); }
+  .prob { font-size: 22px; font-weight: 700; margin: 6px 0; }
+  .defaults-toggle { cursor: pointer; color: var(--muted); font-size: 12px; margin-top: 6px; text-decoration: underline; }
+  .defaults-list { font-size: 12px; color: var(--muted); margin-top: 6px; display: none; }
+  .report-btn {
+    margin-top: 10px; background: transparent; border: 1px solid var(--accent); color: var(--accent);
+    padding: 6px 12px; border-radius: 8px; font-size: 12px; cursor: pointer;
+  }
+  .report-btn:disabled { opacity: 0.5; cursor: default; }
+  #inputRow { display: flex; gap: 8px; padding: 12px; background: var(--panel); border-top: 1px solid rgba(255,255,255,0.06); }
+  #inputRow textarea {
+    flex: 1; resize: none; border-radius: 10px; border: 1px solid rgba(255,255,255,0.1);
+    background: #0d1220; color: var(--text); padding: 10px 12px; font-size: 14px; font-family: inherit; height: 44px;
+  }
+  #inputRow button {
+    background: var(--bubble-user); color: white; border: none; border-radius: 10px;
+    padding: 0 18px; font-size: 14px; cursor: pointer;
+  }
+  #inputRow button:disabled { opacity: 0.5; cursor: default; }
+  .hint { padding: 0 16px 8px; color: var(--muted); font-size: 12px; }
+  .typing { color: var(--muted); font-style: italic; font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>🏥 Readmission Risk Assistant</h1>
+    <div class="config">
+      API:
+      <input id="apiBase" type="text" placeholder="http://127.0.0.1:8000" value="http://127.0.0.1:8000" />
+    </div>
+  </header>
+  <div class="hint">Describe a patient in plain language — anything you leave out gets filled with a typical/default value, shown after each prediction.</div>
+  <div id="messages"></div>
+  <div id="inputRow">
+    <textarea id="input" placeholder="e.g. 68-year-old diabetic woman, 3rd hospital stay this year, 5 days in the hospital, on insulin..."></textarea>
+    <button id="sendBtn">Send</button>
+  </div>
+</div>
+
+<script>
+const messagesEl = document.getElementById('messages');
+const inputEl = document.getElementById('input');
+const sendBtn = document.getElementById('sendBtn');
+const apiBaseEl = document.getElementById('apiBase');
+
+let history = [];       // [{role, content}] plain chat turns for LLM context
+let lastResult = null;  // last /chat response, for the "Generate full report" button
+
+function addMsg(role, html, isHtml) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  if (isHtml) div.innerHTML = html; else div.textContent = html;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return div;
+}
+
+function riskClass(prob) {
+  if (prob >= 0.5) return { cls: 'risk-high', label: 'High Risk' };
+  if (prob >= 0.3) return { cls: 'risk-mod', label: 'Moderate Risk' };
+  return { cls: 'risk-low', label: 'Low Risk' };
+}
+
+function renderResult(result) {
+  const { cls, label } = riskClass(result.readmission_probability);
+  const pct = (result.readmission_probability * 100).toFixed(1) + '%';
+  const filledCount = result.fields_filled_with_defaults.length;
+
+  const card = document.createElement('div');
+  card.className = 'msg bot';
+  card.innerHTML = `
+    <span class="risk-badge ${cls}">${label}</span>
+    <div class="prob">${pct}</div>
+    <div>${result.risk_note}</div>
+    <div class="card" style="margin-top:10px;">
+      <div style="font-size:12px;color:var(--muted);">
+        Extracted from your message: ${result.fields_extracted_from_message.length ? result.fields_extracted_from_message.join(', ') : '(nothing specific — used a fully default patient)'}
+      </div>
+      <div class="defaults-toggle">Show ${filledCount} field(s) filled with defaults</div>
+      <div class="defaults-list">${result.fields_filled_with_defaults.join(', ') || 'none'}</div>
+    </div>
+    <button class="report-btn">📄 Generate full AI report</button>
+    <div class="report-body" style="margin-top:8px;"></div>
+  `;
+  messagesEl.appendChild(card);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  const toggle = card.querySelector('.defaults-toggle');
+  const list = card.querySelector('.defaults-list');
+  toggle.onclick = () => {
+    const showing = list.style.display === 'block';
+    list.style.display = showing ? 'none' : 'block';
+    toggle.textContent = showing
+      ? `Show ${filledCount} field(s) filled with defaults`
+      : `Hide filled-in defaults`;
+  };
+
+  const reportBtn = card.querySelector('.report-btn');
+  const reportBody = card.querySelector('.report-body');
+  reportBtn.onclick = async () => {
+    reportBtn.disabled = true;
+    reportBtn.textContent = 'Generating report...';
+    try {
+      const res = await fetch(apiBaseEl.value.replace(/\/$/, '') + '/report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          patient: result.patient_used,
+          readmission_probability: result.readmission_probability,
+          fields_filled_with_defaults: result.fields_filled_with_defaults,
+        }),
+      });
+      const data = await res.json();
+      reportBody.innerHTML = '<div class="card">' + data.full_report.replace(/\n/g, '<br>') + '</div>';
+      reportBtn.style.display = 'none';
+    } catch (e) {
+      reportBody.innerHTML = '<div class="card" style="color:var(--danger)">Could not generate report: ' + e + '</div>';
+      reportBtn.disabled = false;
+      reportBtn.textContent = '📄 Generate full AI report';
+    }
+  };
+}
+
+async function sendMessage() {
+  const text = inputEl.value.trim();
+  if (!text) return;
+  addMsg('user', text);
+  history.push({ role: 'user', content: text });
+  inputEl.value = '';
+  sendBtn.disabled = true;
+
+  const typing = addMsg('bot', '<span class="typing">Reading patient details and predicting…</span>', true);
+
+  try {
+    const res = await fetch(apiBaseEl.value.replace(/\/$/, '') + '/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, history: history.slice(0, -1), generate_report: false }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    typing.remove();
+    lastResult = data;
+    renderResult(data);
+    history.push({ role: 'assistant', content: data.risk_note });
+  } catch (e) {
+    typing.remove();
+    addMsg('system', 'Could not reach the API at ' + apiBaseEl.value + ' — ' + e.message);
+  } finally {
+    sendBtn.disabled = false;
+    inputEl.focus();
+  }
+}
+
+sendBtn.addEventListener('click', sendMessage);
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+
+addMsg('system', 'Tip: this page works standalone — open it directly, or embed it in an iframe anywhere. Just point "API" above at your running FastAPI backend.');
+</script>
+</body>
+</html>
