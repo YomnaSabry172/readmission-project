@@ -36,13 +36,15 @@ A full-stack machine learning project for predicting 30-day hospital readmission
 
 This project tackles a practical hospital problem: identifying which patients are most likely to be readmitted within 30 days after discharge and turning that prediction into a decision-support tool for case management.
 
-The workflow includes:
+It's built as a complete, end-to-end pipeline rather than a single notebook: raw data goes in one end, and a deployed, interactive risk-prediction tool comes out the other. Concretely, this repo contains:
 
-- data cleaning and feature engineering in the notebooks
-- training and comparing several machine learning models
-- selecting the best model using a cost-oriented framing rather than accuracy alone
-- deploying a prediction API and an interactive dashboard
-- generating plain-language risk notes with Groq
+- **Two Jupyter notebooks** that take the raw UCI dataset through cleaning, feature engineering, encoding, model training, and cost-based model selection — fully reproducible, with every decision explained inline.
+- **Six trained models** compared against each other (Logistic Regression, Decision Tree, Random Forest, XGBoost, CatBoost, Gaussian Naive Bayes), evaluated not just on accuracy but on what a wrong prediction actually costs a hospital.
+- **A FastAPI backend** (`app/main.py`) that serves the winning model as a REST API, so it can be called from anywhere — a hospital's EHR system, a script, or the dashboard below.
+- **A Streamlit dashboard** (`app/streamlit_app.py`) that wraps all of the above into something a non-technical user (a case manager, a clinician) could actually open and use: dataset explanation, model reasoning, visual results, a live prediction form, and an AI chat assistant.
+- **A Groq-powered explanation layer** (`app/chatbot.py`) that turns a raw probability into a plain-language note a case manager can act on, and can also hold a free-text conversation to fill in a patient's details.
+
+If you clone this repo, you should be able to: retrain the models yourself from the notebooks, run the API and dashboard locally, hit the `/predict` endpoint with your own patient data, and understand *why* the model behaves the way it does — not just that it works.
 
 ## Why this matters
 
@@ -99,7 +101,18 @@ Key details:
 - Target: binary 30-day readmission flag
 - Positive class rate: about 11.39%
 
-The dataset includes demographic, admission, diagnosis, medication, lab, and prior-utilization features. A number of preprocessing choices were made to preserve information while keeping the modeling pipeline faithful to the underlying problem.
+The dataset includes demographic, admission, diagnosis, medication, lab, and prior-utilization features. Roughly, the feature groups are:
+
+- **Demographics** — race, gender, age bracket
+- **Admission context** — admission type, discharge disposition, admission source, time in hospital
+- **Clinical load** — number of lab procedures, procedures, medications, and diagnoses per encounter
+- **Prior utilization** — outpatient, emergency, and inpatient visit counts before this encounter (strong readmission signal)
+- **Diagnoses** — up to three ICD-9 diagnosis codes per encounter, grouped into clinical categories (e.g. Circulatory, Diabetes, Respiratory)
+- **Medications** — 20+ diabetes-related drug columns (metformin, insulin, etc.) tracking whether a drug was prescribed, changed, or stopped
+
+One important framing decision: the raw `readmitted` column has three values (`<30`, `>30`, `NO`). This project collapses it into a **binary target** — readmitted within 30 days vs. not — because that's the window hospitals are actually penalized for and can realistically intervene on.
+
+A number of other preprocessing choices were made to preserve information while keeping the modeling pipeline faithful to the underlying problem — see [Notes on modeling](#notes-on-modeling) below.
 
 Sources:
 
@@ -137,11 +150,12 @@ readmission-project/
 
 ## Features
 
-- Cost-aware model comparison and threshold analysis
-- FastAPI-based prediction service
-- Streamlit dashboard with dedicated tabs for problem context, dataset exploration, model explanation, visuals, and live prediction
-- AI-generated risk notes and a conversational chat assistant
-- Notebook-based experimentation and reproducible preprocessing
+- **Cost-aware model comparison** — six models judged on what a wrong prediction actually costs, not just accuracy, with a full threshold sweep to find the real optimal cutoff (see [Notes on modeling](#notes-on-modeling))
+- **A callable prediction service** — the FastAPI backend means the model isn't locked inside a notebook or a single dashboard; anything that can send JSON can get a risk score
+- **A dashboard anyone can use** — five Streamlit tabs walk a non-technical reader from "what's the problem" through "here's the dataset" to "here's a live prediction," so the reasoning isn't hidden behind code
+- **Plain-language risk notes, not just probabilities** — a raw 0.42 doesn't mean anything to a case manager; the Groq layer turns it into something actionable
+- **A conversational fallback** — if someone doesn't have structured data handy, the chat assistant extracts what it can from free text and fills gaps with reasonable defaults instead of failing
+- **Fully reproducible from raw data** — the two notebooks take you from the untouched UCI CSV all the way to the trained artifacts shipped in `app/`, so nothing here is a black box
 
 ## Tech stack
 
@@ -217,11 +231,11 @@ streamlit run app/streamlit_app.py
 
 ## API endpoints
 
-The backend exposes:
+The FastAPI backend is what actually makes this usable outside the dashboard — you can hit it from any system that can send a POST request (an EHR integration, a script, a different frontend entirely). It exposes:
 
-- `POST /predict` — returns a readmission probability and a short risk note
-- `POST /chat` — accepts free-text input and extracts patient fields before scoring
-- `POST /report` — generates a longer AI report for the same patient context
+- `POST /predict` — send structured patient data, get back a readmission probability plus a short, plain-language risk note (no Groq call needed for the core prediction)
+- `POST /chat` — send free text (e.g. a clinical note or a case manager's description of the patient) and it extracts the structured fields itself before scoring, filling in sensible defaults for anything missing
+- `POST /report` — same patient context as `/predict`, but returns a longer AI-generated narrative report suitable for a case file rather than a one-line note
 
 Example request payload for `/predict`:
 
@@ -275,14 +289,52 @@ The notebooks contain the full exploration pipeline, in this order:
 5. Encoding
 6. Train/test splitting
 7. Preprocessing (scaling)
-8. Modeling and comparison of several model families (logistic regression, tree ensembles, XGBoost, CatBoost)
+8. Modeling and comparison of six model families
 9. Cost-based evaluation and threshold selection
 
-The deployed app is centered on a trained model artifact and supports a user-facing explanation layer on top of that prediction.
+### Why accuracy alone was rejected
+
+Only about 11.4% of encounters are actually readmitted within 30 days. A model that just predicts "not readmitted" every time would already be ~89% accurate and completely useless — it would never catch the patients who actually need a follow-up call. So every model here is judged primarily on **recall** (catching true positives) and, ultimately, on **cost**, not raw accuracy.
+
+### Model comparison (test set)
+
+| Model | Precision | Recall | F1 | ROC-AUC |
+|---|---|---|---|---|
+| Logistic Regression | 0.181 | 0.527 | 0.269 | **0.655** |
+| Random Forest | 0.401 | 0.034 | 0.062 | 0.657 |
+| CatBoost | 0.186 | 0.496 | 0.271 | 0.647 |
+| XGBoost | 0.176 | 0.571 | 0.269 | 0.644 |
+| Gaussian Naive Bayes | 0.117 | **0.970** | 0.209 | 0.596 |
+| Decision Tree | 0.148 | 0.188 | 0.165 | 0.523 |
+
+ROC-AUC alone would nudge you toward Random Forest — but its recall (0.034) means it misses almost every true readmission, which is exactly the failure mode this project is trying to avoid.
+
+### Choosing by cost, not accuracy
+
+Each model was re-evaluated by assigning an estimated cost to false negatives (a readmission the hospital didn't see coming — expensive) versus false positives (an unnecessary follow-up call — cheap by comparison). At the default 0.5 threshold:
+
+| Model | False Negatives | False Positives | Estimated Total Cost |
+|---|---|---|---|
+| **XGBoost** | 1,004 | 6,255 | **$8,147,500** |
+| Logistic Regression | 1,108 | 5,589 | $8,334,500 |
+| CatBoost | 1,180 | 5,075 | $8,437,500 |
+| Gaussian Naive Bayes | 63 | 17,190 | $8,910,000 |
+| Decision Tree | 1,901 | 2,542 | $10,776,000 |
+| Random Forest | 2,262 | 118 | $11,369,000 |
+
+XGBoost comes out lowest-cost at the default cutoff. From there, the decision threshold itself (the probability cutoff that triggers an alert) was swept from 0.05 to 0.90 and re-costed at each point — the U-shaped curve bottoms out around **threshold 0.40**, below the default 0.5, meaning the deployed model is tuned to flag patients slightly more aggressively than a naive cutoff would, because under this cost structure a missed readmission is worse than an extra phone call.
+
+The deployed app runs on this trained, cost-tuned model artifact, with the Groq-powered layer on top translating each raw probability into a plain-language risk note.
 
 ## Contributors
+| Contributor | GitHub |
+|---|---|
+| <img src="https://github.com/YomnaSabry172.png?size=100" width="80" alt="Yomna Sabry" /> | [Yomna Sabry](https://github.com/YomnaSabry172) |
+| <img src="https://github.com/ahmedmohamed1807.png?size=100" width="80" alt="Ahmed Mohamed Ghareeb" /> | [Ahmed Mohamed Ghareeb](https://github.com/ahmedmohamed1807) |
+| <img src="https://github.com/mennaallah275.png?size=100" width="80" alt="Mennaallah Mohammed" /> | [Mennaallah Mohammed](https://github.com/mennaallah275) |
+| <img src="https://github.com/fadynasser729-cpu.png?size=100" width="80" alt="Fady Nasser" /> | [Fady Nasser](https://github.com/fadynasser729-cpu) |
+| <img src="https://github.com/hanahassan7.png?size=100" width="80" alt="Hana Hassan" /> | [Hana Hassan](https://github.com/hanahassan7) |
 
-*(add your team here)*
 
 ## Instructors
 
