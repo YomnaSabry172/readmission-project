@@ -11,7 +11,7 @@ A full-stack machine learning project for predicting 30-day hospital readmission
 ![Groq](https://img.shields.io/badge/Groq-Llama_3.3_70B-F55036?logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-**[Live app →](#)** *(replace with your Streamlit Cloud URL)*
+**[Live app →](#)** *(https://readmission-project-prediction-yomnasabry.streamlit.app/ )*
 
 ---
 
